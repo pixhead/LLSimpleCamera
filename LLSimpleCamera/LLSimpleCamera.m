@@ -10,6 +10,7 @@
 #import <ImageIO/CGImageProperties.h>
 #import "UIImage+FixOrientation.h"
 #import "LLSimpleCamera+Helper.h"
+#import <CoreMotion/CoreMotion.h>
 
 @interface LLSimpleCamera () <AVCaptureFileOutputRecordingDelegate, UIGestureRecognizerDelegate>
 @property (strong, nonatomic) UIView *preview;
@@ -28,6 +29,10 @@
 @property (nonatomic, assign) CGFloat beginGestureScale;
 @property (nonatomic, assign) CGFloat effectiveScale;
 @property (nonatomic, copy) void (^didRecordCompletionBlock)(LLSimpleCamera *camera, NSURL *outputFileUrl, NSError *error);
+
+@property (strong,nonatomic) CMMotionManager *motionManager;
+@property UIDeviceOrientation currentOrientation;
+
 @end
 
 NSString *const LLSimpleCameraErrorDomain = @"LLSimpleCameraErrorDomain";
@@ -290,6 +295,26 @@ NSString *const LLSimpleCameraErrorDomain = @"LLSimpleCameraErrorDomain";
     self.session = nil;
 }
 
+// Init Motion Manager for orientation tracking.
+- (void) initializeMotionManager
+{
+  self.motionManager = [[CMMotionManager alloc] init];
+  self.motionManager.accelerometerUpdateInterval = 0.2;
+  self.motionManager.gyroUpdateInterval = .2;
+
+  [self.motionManager startAccelerometerUpdatesToQueue:[NSOperationQueue currentQueue]
+                                           withHandler:^(CMAccelerometerData  *accelerometerData, NSError *error) {
+                                             if (!error)
+                                             {
+                                               [self outputAccelertionData:accelerometerData.acceleration];
+                                             }
+                                             else
+                                             {
+                                               NSLog(@"%@", error);
+                                             }
+                                           }];
+}
+
 
 #pragma mark - Image Capture
 
@@ -305,8 +330,8 @@ NSString *const LLSimpleCameraErrorDomain = @"LLSimpleCameraErrorDomain";
     
     // get connection and set orientation
     AVCaptureConnection *videoConnection = [self captureConnection];
-    videoConnection.videoOrientation = [self orientationForConnection];
-    
+    videoConnection.videoOrientation = (AVCaptureVideoOrientation)self.currentOrientation;
+
     BOOL flashActive = self.videoCaptureDevice.flashActive;
     if (!flashActive && animationBlock) {
         animationBlock(self.captureVideoPreviewLayer);
@@ -754,11 +779,16 @@ NSString *const LLSimpleCameraErrorDomain = @"LLSimpleCameraErrorDomain";
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
+
+    // Track current orientation
+    [self initializeMotionManager];
 }
 
 - (void)viewWillDisappear:(BOOL)animated
 {
     [super viewWillDisappear:animated];
+
+    [self.motionManager stopAccelerometerUpdates];
 }
 
 - (void)viewWillLayoutSubviews
@@ -874,6 +904,29 @@ NSString *const LLSimpleCameraErrorDomain = @"LLSimpleCameraErrorDomain";
 + (BOOL)isRearCameraAvailable
 {
     return [UIImagePickerController isCameraDeviceAvailable:UIImagePickerControllerCameraDeviceRear];
+}
+
+// Update current device orientation
+- (void)outputAccelertionData:(CMAcceleration)acceleration
+{
+  UIDeviceOrientation orientationNew;
+
+  if (acceleration.x >= 0.75)
+    orientationNew = UIDeviceOrientationLandscapeRight;
+  else if (acceleration.x <= -0.75)
+    orientationNew = UIDeviceOrientationLandscapeLeft;
+  else if (acceleration.y <= -0.75)
+    orientationNew = UIDeviceOrientationPortrait;
+  else if (acceleration.y >= 0.75)
+    orientationNew = UIDeviceOrientationPortraitUpsideDown;
+  else
+    // Consider same as last time
+    return;
+
+  if (orientationNew == self.currentOrientation)
+    return;
+
+  self.currentOrientation = orientationNew;
 }
 
 @end
